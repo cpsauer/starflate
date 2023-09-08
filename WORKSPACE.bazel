@@ -49,12 +49,13 @@ http_archive(
 
 load("@bazel_bootlin//:defs.bzl", "bootlin_toolchain")
 
-# for mapping from buildroot version to gcc version
-# see https://toolchains.bootlin.com/releases_x86-64.html
 bootlin_toolchain(
     name = "gcc_toolchain",
-    architecture = "x86-64",
-    buildroot_version = "bleeding-edge-2022.08-1",
+    # x86-64-v3 should cover CPUs released after ~2015.
+    # see https://www.phoronix.com/news/GCC-11-x86-64-Feature-Levels.
+    architecture = "x86-64-v3",
+    # see https://toolchains.bootlin.com/releases_x86-64-v3.html
+    buildroot_version = "bleeding-edge-2023.08-1",
     extra_cxx_flags = [
         "-fdiagnostics-color=always",
         "-std=c++23",
