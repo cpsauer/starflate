@@ -1,8 +1,11 @@
 #pragma once
 
 #include "huffman/src/detail/element_base_iterator.hpp"
+#include "huffman/src/detail/flattened_symbol_bitsize_view.hpp"
+#include "huffman/src/detail/is_specialization_of.hpp"
 #include "huffman/src/detail/table_node.hpp"
 #include "huffman/src/detail/table_storage.hpp"
+#include "huffman/src/symbol_span.hpp"
 #include "huffman/src/utility.hpp"
 
 #include <algorithm>
@@ -55,10 +58,19 @@ constexpr static auto find_node_if(I first, I last, P pred)
 template <class R>
 constexpr auto to_code_symbol(const R& rng)
 {
-  return std::views::transform(rng, [](const auto& elem) {
-    const auto& [symbol, bitsize] = elem;
-    return std::tuple{code{bitsize, {}}, symbol};
-  });
+  static constexpr auto convert_with = [](auto bitsize) {
+    return [bitsize](auto symbol) {
+      return std::tuple{code{bitsize, {}}, symbol};
+    };
+  };
+
+  static constexpr auto expand = [](const auto& elem) {
+    const auto& [symbols, bitsize] = elem;
+    static_assert(std::ranges::view<std::remove_cvref_t<decltype(symbols)>>);
+    return std::views::transform(symbols, convert_with(bitsize));
+  };
+
+  return flattened_symbol_bitsize_view{std::views::transform(rng, expand)};
 }
 
 }  // namespace detail
@@ -74,8 +86,7 @@ constexpr auto to_code_symbol(const R& rng)
 /// `std::array` is used to store the Huffman tree, with the size determined by
 /// `Extent`.
 ///
-template <std::regular Symbol, std::size_t Extent = std::dynamic_extent>
-  requires std::totally_ordered<Symbol>
+template <symbol Symbol, std::size_t Extent = std::dynamic_extent>
 class table
 {
   using node_type = detail::table_node<Symbol>;
@@ -234,17 +245,17 @@ public:
 
   template <std::ranges::input_range R>
     requires std::convertible_to<std::ranges::range_reference_t<R>, symbol_type>
-  constexpr explicit table(const R& data) : table{data, {}}
-  {}
-
-  template <std::ranges::input_range R>
-    requires std::convertible_to<std::ranges::range_reference_t<R>, symbol_type>
   constexpr explicit table(const R& data, std::optional<symbol_type> eot)
       : table_{detail::data_tag{}, data, eot}
   {
     construct_table();
     set_skip_fields();
   }
+
+  template <std::ranges::input_range R>
+    requires std::convertible_to<std::ranges::range_reference_t<R>, symbol_type>
+  constexpr explicit table(const R& data) : table{data, {}}
+  {}
 
   /// @}
 
@@ -275,10 +286,8 @@ public:
   template <std::size_t N>
   constexpr table(
       table_contents_tag, const c_array<std::pair<code, symbol_type>, N>& map)
-      : table_{table_contents, map}
-  {
-    set_skip_fields();
-  }
+      : table{table_contents, std::ranges::ref_view{map}}
+  {}
 
   /// @}
 
@@ -291,10 +300,10 @@ public:
   ///
   /// @{
 
-  template <std::ranges::sized_range R>
+  template <std::ranges::random_access_range R>
     requires std::convertible_to<
         std::ranges::range_reference_t<R>,
-        std::tuple<symbol_type, std::uint8_t>>
+        std::tuple<symbol_span<symbol_type>, std::uint8_t>>
   constexpr table(symbol_bitsize_tag, const R& map)
       : table{table_contents, detail::to_code_symbol(map)}
   {
@@ -304,11 +313,9 @@ public:
   template <std::size_t N>
   constexpr table(
       symbol_bitsize_tag,
-      const c_array<std::pair<symbol_type, std::uint8_t>, N>& map)
-      : table{table_contents, detail::to_code_symbol(map)}
-  {
-    canonicalize();
-  }
+      const c_array<std::pair<symbol_span<symbol_type>, std::uint8_t>, N>& map)
+      : table{symbol_bitsize, std::ranges::ref_view{map}}
+  {}
 
   /// @}
 
@@ -508,11 +515,17 @@ table(table_contents_tag, const R&)
     -> table<detail::tuple_arg_t<1, R>, detail::tuple_size_v<R>()>;
 
 template <class S, class I, std::size_t N>
+  requires (not detail::is_specialization_of_v<S, symbol_span>)
 table(symbol_bitsize_tag, const c_array<std::pair<S, I>, N>&) -> table<S, N>;
 
 template <class R>
-  requires (detail::tuple_size_v<std::ranges::range_value_t<R>>() == 2)
-table(symbol_bitsize_tag, const R&)
-    -> table<detail::tuple_arg_t<0, R>, detail::tuple_size_v<R>()>;
+  requires (
+      detail::tuple_size_v<std::ranges::range_value_t<R>>() == 2 and
+      detail::is_specialization_of_v<
+          std::tuple_element_t<0, std::ranges::range_value_t<R>>,
+          symbol_span>)
+table(symbol_bitsize_tag, const R&) -> table<
+    typename detail::tuple_arg_t<0, R>::symbol_type,
+    detail::tuple_size_v<R>()>;
 
 }  // namespace starflate::huffman

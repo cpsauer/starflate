@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 
 namespace starflate::huffman {
@@ -26,5 +27,10 @@ struct symbol_bitsize_tag
   explicit symbol_bitsize_tag() = default;
 };
 inline constexpr auto symbol_bitsize = symbol_bitsize_tag{};
+
+/// Specifies that a type that can be used as a symbol
+///
+template <class T>
+concept symbol = std::regular<T> and std::totally_ordered<T>;
 
 }  // namespace starflate::huffman
